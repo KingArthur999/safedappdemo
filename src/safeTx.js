@@ -221,6 +221,202 @@ export async function executeOnly(
   )
 }
 
+export async function proposeAddOwner(
+  provider,
+  safeAddress,
+  newOwner,
+  newThreshold
+) {
+  const safe = new ethers.Contract(
+    safeAddress,
+    [
+      "function addOwnerWithThreshold(address owner,uint256 _threshold)"
+    ],
+    provider
+  )
+
+  const data = safe.interface.encodeFunctionData(
+    "addOwnerWithThreshold",
+    [newOwner, newThreshold]
+  )
+
+  return {
+    to: safeAddress,
+    value: "0",
+    data,
+    operation: 0
+  }
+}
+export async function proposeRemoveOwner(
+  provider,
+  safeAddress,
+  ownerToRemove,
+  newThreshold
+) {
+  const safe = new ethers.Contract(
+    safeAddress,
+    [
+      "function getOwners() view returns (address[])",
+      "function removeOwner(address prevOwner,address owner,uint256 _threshold)"
+    ],
+    provider
+  )
+
+  const owners = await safe.getOwners()
+
+  const index = owners
+    .map(o => o.toLowerCase())
+    .indexOf(ownerToRemove.toLowerCase())
+
+  if (index === -1) {
+    throw new Error("Owner not found")
+  }
+
+  const prevOwner =
+    index === 0
+      ? ethers.constants.AddressZero
+      : owners[index - 1]
+
+  const data = safe.interface.encodeFunctionData(
+    "removeOwner",
+    [prevOwner, ownerToRemove, newThreshold]
+  )
+
+  return {
+    to: safeAddress,
+    value: "0",
+    data,
+    operation: 0
+  }
+}
+
+export async function submitAddOwner(
+  safeAddress,
+  newOwner,
+  newThreshold
+) {
+  const provider = new ethers.providers.Web3Provider(window.ethereum)
+  await provider.send("eth_requestAccounts", [])
+
+  const safe = new ethers.Contract(
+    safeAddress,
+    [
+      "function addOwnerWithThreshold(address owner,uint256 _threshold)"
+    ],
+    provider
+  )
+
+  // 1️⃣ 构造 data
+  const data = safe.interface.encodeFunctionData(
+    "addOwnerWithThreshold",
+    [newOwner, newThreshold]
+  )
+
+  // 2️⃣ 构造 SafeTx
+  const { tx, safeTxHash } = await buildSafeTx(
+    provider,
+    safeAddress,
+    safeAddress,   // to = safe 本身
+    "0"
+  )
+
+  tx.data = data
+
+  // 3️⃣ 当前钱包签名
+  const { owner, signature } = await signSafeTx(
+    provider,
+    safeAddress,
+    tx
+  )
+
+  saveSig(safeAddress, safeTxHash, owner, signature)
+
+  // 4️⃣ 满足 threshold 自动执行
+  return await executeIfEnough(
+    provider,
+    safeAddress,
+    safeTxHash,
+    tx
+  )
+}
+
+
+export async function submitRemoveOwner(
+  safeAddress,
+  ownerToRemove,
+  newThreshold
+) {
+console.log("removeOwner =", ownerToRemove, "newThreshold =", newThreshold)
+
+  const provider = new ethers.providers.Web3Provider(window.ethereum)
+  await provider.send("eth_requestAccounts", [])
+
+  const safe = new ethers.Contract(
+    safeAddress,
+    [
+      "function getOwners() view returns (address[])",
+      "function getThreshold() view returns (uint256)",
+      "function removeOwner(address prevOwner,address owner,uint256 _threshold)",
+      "function getOwners() view returns (address[])",
+      "function getStorageAt(uint256 offset,uint256 length) view returns (bytes)"
+    ],
+    provider
+  )
+
+  const SENTINEL = "0x0000000000000000000000000000000000000001"
+
+  ownerToRemove = ethers.utils.getAddress(ownerToRemove.trim())
+
+  const owners = await safe.getOwners()
+
+  if (!owners.map(o => o.toLowerCase()).includes(ownerToRemove.toLowerCase())) {
+    throw new Error("Owner not found in Safe")
+  }
+
+  // ===== 正确方式：遍历链表找 prevOwner =====
+  let prevOwner = SENTINEL
+  let currentOwner = owners[0]
+
+  for (let i = 0; i < owners.length; i++) {
+    if (currentOwner.toLowerCase() === ownerToRemove.toLowerCase()) {
+      break
+    }
+    prevOwner = currentOwner
+    currentOwner = owners[i + 1]
+  }
+
+  const data = safe.interface.encodeFunctionData(
+    "removeOwner",
+    [prevOwner, ownerToRemove, newThreshold]
+  )
+
+  // 构造 SafeTx
+  const { tx, safeTxHash } = await buildSafeTx(
+    provider,
+    safeAddress,
+    safeAddress,
+    "0"
+  )
+
+  tx.data = data
+
+  const { owner, signature } = await signSafeTx(
+    provider,
+    safeAddress,
+    tx
+  )
+
+  saveSig(safeAddress, safeTxHash, owner, signature)
+
+  return await executeIfEnough(
+    provider,
+    safeAddress,
+    safeTxHash,
+    tx
+  )
+}
+
+
 
 // export async function submitSafeTransfer(
 //   safeAddress,

@@ -9,6 +9,8 @@ import {
   loadSigs,
   saveSig
 } from "./safeTx"
+import { submitAddOwner, submitRemoveOwner } from "./safeTx"
+
 
 function parseOwners(text) {
   const parts = (text || "")
@@ -43,6 +45,9 @@ export default function App() {
 
   const [currentTx, setCurrentTx] = useState(null)
   const [currentHash, setCurrentHash] = useState("")
+
+  const [newOwner, setNewOwner] = useState("")
+  const [removeOwner, setRemoveOwner] = useState("")
 
   const owners = useMemo(() => parseOwners(ownersText), [ownersText])
   const threshold = useMemo(() => Number(thresholdText || 0), [thresholdText])
@@ -123,6 +128,40 @@ export default function App() {
       setLoading(false)
     }
   }
+async function handleAddOwner() {
+  try {
+    setLoading(true)
+    const hash = await submitAddOwner(
+      safeAddress,
+      newOwner,
+      safeInfo.threshold
+    )
+    alert("Submitted / Executed: " + hash)
+  } catch (e) {
+    alert(e.message)
+  } finally {
+    setLoading(false)
+  }
+}
+async function handleRemoveOwner() {
+  console.log("removeOwner =", removeOwner, "newOwner =", newOwner)
+
+  try {
+    setLoading(true)
+    const hash = await submitRemoveOwner(
+      safeAddress,
+      removeOwner,
+      safeInfo.threshold
+    )
+    alert("Submitted / Executed: " + hash)
+  } catch (e) {
+    alert(e.message)
+  } finally {
+    setLoading(false)
+  }
+}
+
+
 
   async function handleExecute() {
     try {
@@ -206,6 +245,33 @@ export default function App() {
           </ul>
         </div>
       )}
+      <div style={{ marginTop: 40 }}>
+        <h3>Owner Management</h3>
+
+        <input
+          placeholder="New Owner Address"
+          value={newOwner}
+          onChange={(e) => setNewOwner(e.target.value)}
+          style={{ width: 400 }}
+        />
+
+        <button onClick={handleAddOwner}>
+          Add Owner
+        </button>
+
+        <br /><br />
+
+        <input
+          placeholder="Owner To Remove"
+          value={removeOwner}
+          onChange={(e) => setRemoveOwner(e.target.value)}
+          style={{ width: 400 }}
+        />
+
+        <button onClick={handleRemoveOwner}>
+          Remove Owner
+        </button>
+      </div>
 
       <hr />
 
