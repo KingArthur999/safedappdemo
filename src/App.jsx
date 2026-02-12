@@ -2,18 +2,23 @@ import { useMemo, useState } from "react"
 import { ethers } from "ethers"
 import { createSafe } from "./createSafe"
 import { readSafeData } from "./readSafe"
-import { submitSafeTransfer } from "./safeTx"
+import {
+  buildSafeTx,
+  signSafeTx,
+  executeIfEnough,
+  loadSigs,
+  saveSig
+} from "./safeTx"
 
 function parseOwners(text) {
-  // 支持：换行 / 逗号 / 空格 分隔
   const parts = (text || "")
     .split(/[\n,，\s]+/g)
     .map((s) => s.trim())
     .filter(Boolean)
 
-  // 过滤非法地址 + 去重
   const owners = []
   const seen = new Set()
+
   for (const p of parts) {
     if (!ethers.utils.isAddress(p)) continue
     const lower = p.toLowerCase()
@@ -21,6 +26,7 @@ function parseOwners(text) {
     seen.add(lower)
     owners.push(ethers.utils.getAddress(p))
   }
+
   return owners
 }
 
@@ -29,43 +35,26 @@ export default function App() {
   const [safeInfo, setSafeInfo] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  // transfer form
+  const [ownersText, setOwnersText] = useState("")
+  const [thresholdText, setThresholdText] = useState("1")
+
   const [to, setTo] = useState("")
   const [amount, setAmount] = useState("")
 
-  // create form (NEW)
-  const [ownersText, setOwnersText] = useState(
-    [
-      "0x5e5d398C47d30f7a3Ef51a08C38305dAE6052f13",
-      "0xe235F886f1fcC5aFa6CCB82021dB465A997fc2a3",
-      "0xaf14Fef12609d26eC31fdf638CdbCD025D3f48CD",
-    ].join("\n")
-  )
-  const [thresholdText, setThresholdText] = useState("2")
+  const [currentTx, setCurrentTx] = useState(null)
+  const [currentHash, setCurrentHash] = useState("")
 
   const owners = useMemo(() => parseOwners(ownersText), [ownersText])
-  const threshold = useMemo(() => {
-    const n = Number(thresholdText || "0")
-    return Number.isFinite(n) ? Math.floor(n) : 0
-  }, [thresholdText])
-
-  const createValidation = useMemo(() => {
-    if (owners.length === 0) return "Owners 不能为空（必须是合法地址）"
-    if (threshold <= 0) return "Threshold 必须 >= 1"
-    if (threshold > owners.length) return "Threshold 不能大于 Owners 数量"
-    return ""
-  }, [owners.length, threshold])
+  const threshold = useMemo(() => Number(thresholdText || 0), [thresholdText])
 
   async function handleCreate() {
     try {
-      if (createValidation) throw new Error(createValidation)
-
       setLoading(true)
       const safe = await createSafe(owners, threshold)
       setSafeAddress(safe)
-      alert("✅ Safe created: " + safe)
+      alert("Safe created: " + safe)
     } catch (e) {
-      alert(e?.message || String(e))
+      alert(e.message)
     } finally {
       setLoading(false)
     }
@@ -77,140 +66,186 @@ export default function App() {
       const data = await readSafeData(safeAddress)
       setSafeInfo(data)
     } catch (e) {
-      alert(e?.message || String(e))
+      alert(e.message)
     } finally {
       setLoading(false)
     }
   }
 
-  async function handleTransfer() {
+  async function handleBuild() {
     try {
       setLoading(true)
-      const hash = await submitSafeTransfer(safeAddress, to, amount)
-      alert("✅ Submitted: " + hash)
+
+      const provider = new ethers.providers.Web3Provider(window.ethereum)
+      await provider.send("eth_requestAccounts", [])
+
+      const { tx, safeTxHash } = await buildSafeTx(
+        provider,
+        safeAddress,
+        to,
+        amount
+      )
+
+      setCurrentTx(tx)
+      setCurrentHash(safeTxHash)
+
+      alert("Tx built.\nHash: " + safeTxHash)
+
     } catch (e) {
-      alert(e?.message || String(e))
+      alert(e.message)
     } finally {
       setLoading(false)
     }
   }
+
+  async function handleSign() {
+    try {
+      if (!currentTx) throw new Error("No transaction built")
+
+      setLoading(true)
+
+      const provider = new ethers.providers.Web3Provider(window.ethereum)
+      await provider.send("eth_requestAccounts", [])
+
+      const { owner, signature } = await signSafeTx(
+        provider,
+        safeAddress,
+        currentTx
+      )
+
+      saveSig(safeAddress, currentHash, owner, signature)
+
+      alert("Signed by: " + owner)
+
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleExecute() {
+    try {
+      if (!currentTx) throw new Error("No transaction built")
+
+      setLoading(true)
+
+      const provider = new ethers.providers.Web3Provider(window.ethereum)
+      await provider.send("eth_requestAccounts", [])
+
+      const hash = await executeIfEnough(
+        provider,
+        safeAddress,
+        currentHash,
+        currentTx
+      )
+
+      alert("Executed! TxHash: " + hash)
+
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sigCount = currentHash
+    ? Object.keys(loadSigs(safeAddress, currentHash)).length
+    : 0
 
   return (
     <div style={{ padding: 40, fontFamily: "Arial" }}>
       <h2>Safe Wallet UI</h2>
 
-      <div style={{ marginTop: 12, padding: 12, border: "1px solid #ddd", width: 720 }}>
-        <h3 style={{ marginTop: 0 }}>Create Safe</h3>
+      <h3>Create Safe</h3>
 
-        <div style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, marginBottom: 6 }}>Owners（每行一个地址）</div>
-            <textarea
-              value={ownersText}
-              onChange={(e) => setOwnersText(e.target.value)}
-              rows={6}
-              style={{ width: "100%", fontFamily: "monospace" }}
-              placeholder={"0x...\n0x...\n0x..."}
-            />
-            <div style={{ fontSize: 12, marginTop: 6 }}>
-              解析到 owners 数量：<b>{owners.length}</b>
-            </div>
-          </div>
+      <textarea
+        rows={4}
+        style={{ width: 400 }}
+        placeholder="Owners (one per line)"
+        value={ownersText}
+        onChange={(e) => setOwnersText(e.target.value)}
+      />
 
-          <div style={{ width: 220 }}>
-            <div style={{ fontSize: 12, marginBottom: 6 }}>Threshold</div>
-            <input
-              value={thresholdText}
-              onChange={(e) => setThresholdText(e.target.value)}
-              style={{ width: "100%" }}
-              placeholder="2"
-            />
+      <br /><br />
 
-            {createValidation ? (
-              <div style={{ marginTop: 10, color: "crimson", fontSize: 12 }}>
-                {createValidation}
-              </div>
-            ) : (
-              <div style={{ marginTop: 10, color: "green", fontSize: 12 }}>
-                ✅ 可创建
-              </div>
-            )}
+      <input
+        placeholder="Threshold"
+        value={thresholdText}
+        onChange={(e) => setThresholdText(e.target.value)}
+      />
 
-            <button
-              onClick={handleCreate}
-              disabled={loading || !!createValidation}
-              style={{ marginTop: 12, width: "100%" }}
-            >
-              Create Safe
-            </button>
-          </div>
-        </div>
-      </div>
+      <br /><br />
 
-      <div style={{ marginTop: 20 }}>
-        <input
-          placeholder="Safe Address"
-          value={safeAddress}
-          onChange={(e) => setSafeAddress(e.target.value)}
-          style={{ width: 520 }}
-        />
-        <button onClick={handleRead} disabled={loading} style={{ marginLeft: 8 }}>
-          Read Safe
-        </button>
-      </div>
+      <button onClick={handleCreate} disabled={loading}>
+        Create Safe
+      </button>
+
+      <hr />
+
+      <h3>Read Safe</h3>
+
+      <input
+        placeholder="Safe Address"
+        value={safeAddress}
+        onChange={(e) => setSafeAddress(e.target.value)}
+        style={{ width: 400 }}
+      />
+
+      <button onClick={handleRead} disabled={loading}>
+        Read
+      </button>
 
       {safeInfo && (
-        <div style={{ marginTop: 30 }}>
-          <h3>Safe Info</h3>
-
-          <p>
-            <b>MasterCopy:</b> {safeInfo.masterCopy}
-          </p>
-          <p>
-            <b>Threshold:</b> {safeInfo.threshold}
-          </p>
-          <p>
-            <b>Nonce:</b> {safeInfo.nonce}
-          </p>
-
-          <p>
-            <b>Owners:</b>
-          </p>
+        <div>
+          <p>Threshold: {safeInfo.threshold}</p>
+          <p>Nonce: {safeInfo.nonce}</p>
+          <p>Owners:</p>
           <ul>
-            {safeInfo.owners.map((o) => (
-              <li key={o}>{o}</li>
-            ))}
+            {safeInfo.owners.map(o => <li key={o}>{o}</li>)}
           </ul>
         </div>
       )}
 
-      <div style={{ marginTop: 40 }}>
-        <h3>Safe Transfer</h3>
+      <hr />
 
-        <input
-          placeholder="Recipient"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          style={{ width: 520 }}
-        />
+      <h3>Transfer (2/3 Safe)</h3>
 
-        <br />
-        <br />
+      <input
+        placeholder="Recipient"
+        value={to}
+        onChange={(e) => setTo(e.target.value)}
+        style={{ width: 400 }}
+      />
 
-        <input
-          placeholder="Amount (ETH)"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          style={{ width: 220 }}
-        />
+      <br /><br />
 
-        <br />
-        <br />
+      <input
+        placeholder="Amount (ETH)"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+      />
 
-        <button onClick={handleTransfer} disabled={loading}>
-          Submit Safe Transfer
-        </button>
-      </div>
+      <br /><br />
+
+      <button onClick={handleBuild} disabled={loading}>
+        1️⃣ Build Tx
+      </button>
+
+      <button onClick={handleSign} disabled={loading || !currentTx}>
+        2️⃣ Sign
+      </button>
+
+      <button onClick={handleExecute} disabled={loading || !currentTx}>
+        3️⃣ Execute
+      </button>
+
+      {currentHash && (
+        <div style={{ marginTop: 20 }}>
+          <p><b>SafeTxHash:</b> {currentHash}</p>
+          <p><b>Collected Signatures:</b> {sigCount}</p>
+        </div>
+      )}
     </div>
   )
 }

@@ -165,8 +165,7 @@ export async function executeIfEnough(provider, safeAddress, safeTxHash, safeTx)
 
   return txResp.hash
 }
-
-export async function submitSafeTransfer(
+export async function createSafeTransferTx(
   safeAddress,
   to,
   amount
@@ -181,20 +180,77 @@ export async function submitSafeTransfer(
     amount
   )
 
+  return { tx, safeTxHash }
+}
+export async function signOnly(
+  safeAddress,
+  safeTxHash,
+  safeTx
+) {
+  const provider = new ethers.providers.Web3Provider(window.ethereum)
+  await provider.send("eth_requestAccounts", [])
+
   const { owner, signature } = await signSafeTx(
     provider,
     safeAddress,
-    tx
+    safeTx
   )
 
   saveSig(safeAddress, safeTxHash, owner, signature)
+
+  return {
+    owner,
+    signature,
+    sigCount: Object.keys(loadSigs(safeAddress, safeTxHash)).length
+  }
+}
+
+export async function executeOnly(
+  safeAddress,
+  safeTxHash,
+  safeTx
+) {
+  const provider = new ethers.providers.Web3Provider(window.ethereum)
+  await provider.send("eth_requestAccounts", [])
 
   return await executeIfEnough(
     provider,
     safeAddress,
     safeTxHash,
-    tx
+    safeTx
   )
 }
+
+
+// export async function submitSafeTransfer(
+//   safeAddress,
+//   to,
+//   amount
+// ) {
+//   const provider = new ethers.providers.Web3Provider(window.ethereum)
+//   await provider.send("eth_requestAccounts", [])
+
+//   const { tx, safeTxHash } = await buildSafeTx(
+//     provider,
+//     safeAddress,
+//     to,
+//     amount
+//   )
+
+//   const { owner, signature } = await signSafeTx(
+//     provider,
+//     safeAddress,
+//     tx
+//   )
+
+//   saveSig(safeAddress, safeTxHash, owner, signature)
+
+//   return await executeIfEnough(
+//     provider,
+//     safeAddress,
+//     safeTxHash,
+//     tx
+//   )
+// }
 
 
