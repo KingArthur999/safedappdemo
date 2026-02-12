@@ -1,0 +1,19 @@
+{
+  "name": "eva-safe-creator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "ethers": "5.7.2"
+  },
+  "devDependencies": {
+    "vite": "5.2.10",
+    "@vitejs/plugin-react": "4.2.1"
+  }
+}
